@@ -17,9 +17,9 @@ plt.rcParams.update({'font.size': 30,
                     'ytick.major.size':15,
                      'ytick.minor.size':10})
 
-dataPath='/scratch/richardt/Tracker_EIC/data/'
+dataPath='/scratch/richardt/Tracker_EIC/data_v3/'
 
-saveDir='/home/richardt/public_html/Tracker_EIC/object_condensation/initial_testing/'
+saveDir='/home/richardt/public_html/Tracker_EIC/object_condensation/initial_testing_wPID/'
 endName=''
 
 fileNbs=3

@@ -32,7 +32,12 @@ def clean_hits_and_truth(tf_hits,tf_truth):
 
         new_hits=tf_hits[i].numpy()
         new_truth=tf_truth[i].numpy()
+
+        #want ID going from 0 to N tracks
+        new_truth=assign_new_ID(new_truth)
         
+        #some hits are all zero for some reason
+        #recognise these with zero momentum
         new_hits= np.delete(new_hits, np.where((new_truth[:,3]==0) & (new_truth[:,4]==0))[0], axis=0)
         new_truth= np.delete(new_truth, np.where((new_truth[:,3]==0) & (new_truth[:,4]==0))[0], axis=0)
 
@@ -43,8 +48,8 @@ def clean_hits_and_truth(tf_hits,tf_truth):
         truth_objid=new_truth[:,0].reshape((new_truth.shape[0]))
         #print('truthID')
         #print(truth_objid)
-
         unique_truth_objid=np.unique(truth_objid)
+        #remove tracks with more than four hits
         for ID in unique_truth_objid:
             if truth_objid[truth_objid==ID].shape[0]>4:
                 new_hits= np.delete(new_hits, np.where(truth_objid==ID)[0], axis=0)
@@ -54,16 +59,16 @@ def clean_hits_and_truth(tf_hits,tf_truth):
         #print('event shape, hits, truth')
         #print(new_hits.shape)
         #print(new_truth.shape)
+        #print(new_hits)
+        #print(new_truth)
         #print('truthID')
         #print(new_truth[:,0].reshape((new_truth.shape[0])))
         if new_hits.shape[0]>maxEvLength:
             maxEvLength=new_hits.shape[0]
 
         if new_hits.shape[0]!=0:
-                
-            new_hits=tf.ragged.constant(new_hits.reshape((1,new_hits.shape[0],6)))
-            new_truth=tf.ragged.constant(new_truth.reshape((1,new_truth.shape[0],5)))
-        
+            new_hits=tf.ragged.constant(new_hits.reshape((1,new_hits.shape[0],new_hits.shape[1])))
+            new_truth=tf.ragged.constant(new_truth.reshape((1,new_truth.shape[0],new_truth.shape[1])))
             if i==0:
                 new_tf_hits=new_hits
                 new_tf_truth=new_truth
@@ -72,6 +77,19 @@ def clean_hits_and_truth(tf_hits,tf_truth):
                 new_tf_truth=tf.concat([new_tf_truth, new_truth], 0)
 
     return new_tf_hits,new_tf_truth,maxEvLength
+
+def assign_new_ID(truth):
+    uniq_id=[]
+    #loop over hits in event
+    for i in range(truth.shape[0]):
+        id_part=truth[i,0]
+        #hits belonging to same particle always come together
+        #recast id to how many previous groups of hits found
+        if id_part not in uniq_id:
+            uniq_id.append(id_part)
+        
+        truth[i,0]=len(uniq_id)
+    return truth
 
 def normalise_df_hits(df):
     df['xID'] = df['xID'].add(1400)
@@ -98,19 +116,9 @@ def unnormalise_df_hits(df):
     df['moduleID'] = df['moduleID'].mul(2)
     return df
 
-def readFile(fileNameInput,loc,fNb):
+def readFile(fileNameInput):
 
     fileInput = uproot.open(fileNameInput) 
-
-    tree_part = fileInput['particles']
-    #print(type(tree))
-    branches_part = tree_part.arrays()
-    branchNames_part=tree_part.keys()
-
-    df_part=ak.to_dataframe(branches_part)
-
-    #print(branchNames_part)
-    #print(df_part.xs(0,level='entry')['scatteredElectron_id'])
 
     tree = fileInput['hits']
     #print(type(tree))
@@ -121,18 +129,22 @@ def readFile(fileNameInput,loc,fNb):
 
     df['nonoise'] = np.where(df['real_hitID'] == -1, 0, 1)
 
+    df['quasireal'] = np.where(df['real_hitID'] == 4, 1, 0)
+
+    df['brehm'] = np.where(df['real_hitID'] == 4, 0, 1)
+
     hits=df[['xID', 'yID','layerID','real_time','real_EDep','moduleID']].copy()
 
-    truth=df[['real_hitID','nonoise']].copy()
+    truth=df[['real_hitID','nonoise','real_mom_x','real_mom_y','real_mom_z','quasireal','brehm']].copy()
 
     hits=normalise_df_hits(hits)
 
     #print(module_id)
 
     print('\n Parsing hits')
-    tf_hits=make_tf(hits,df_part,False,loc,fNb)
-    print('\n Parsing truth (be very patient)')
-    tf_truth=make_tf(truth,df_part,True,loc,fNb)
+    tf_hits=make_tf(hits)
+    print('\n Parsing truth')
+    tf_truth=make_tf(truth)
 
     print('\n tf hits & truth')
     print(tf_hits.shape)
@@ -149,77 +161,25 @@ def printEvents(tf):
     for i in range(tf.shape[0]):
         print(tf[i,:,:])
 
-def add_to_tf(count,tf_df,ev,ev_part,isTruth):
+def add_to_tf(count,tf_df,ev):
     if ev.shape[0]!=0:
         tf_ev=tf.ragged.constant(ev.values)
-
-        if isTruth==True:
-            #print(tf_ev)
-            #print(ev_part)
-            tf_ev=assign_particles_to_hits(tf_ev,ev_part)
-            #print(tf_ev)
-            
         tf_ev=tf.expand_dims(tf_ev, axis=0)
-    
         if count==0:
             tf_df=tf_ev
             count=count+1
         else:
             tf_df=tf.concat([tf_df, tf_ev], 0)
-    return count,tf_df
+    return count,tf_df    
 
-def assign_particles_to_hits(tf_ev,ev_part):
-    tf_new=np.zeros((tf_ev.shape[0],5))
-    uniq_id=[]
-    for j in range(tf_ev.shape[0]):#loop over hits in event
-        for i in range(ev_part.shape[0]):#loop over particles in event
-            id_part=ev_part[i,3]
-            id_hit=tf_ev[j,0]
-
-            #tf_new[j,1]=tf_ev[j,1]
-            #print('NoNoise '+str(tf_new[j,1]))
-            if id_part==id_hit:
-
-                #hits belonging to same particle always come together
-                #recast id to how many previous groups of hits found
-                if id_part not in uniq_id:
-                    uniq_id.append(id_part)
-
-                if (ev_part[i,4] < 5) & (ev_part[i,5] < 5):
-                    tf_new[j,0]=len(uniq_id)
-                    tf_new[j,1]=tf_ev[j,1]
-                    tf_new[j,2]=ev_part[i,0]
-                    tf_new[j,3]=ev_part[i,1]
-                    tf_new[j,4]=ev_part[i,2]/20
-                    #print('id '+str(id_part)+' recast '+str(len(uniq_id)))
-                    #print('NHitsMod1 '+str(ev_part[i,4]))
-                    #print('NHitsMod2 '+str(ev_part[i,5]))
-                    #print('NoNoise '+str(tf_new[j,1]))
-                    #print('Px '+str(ev_part[i,0]))
-                    #print('Py '+str(ev_part[i,1]))
-                    #print('Pz '+str(ev_part[i,2]/20))
-                
-    return tf.ragged.constant(tf_new)
-    
-
-def make_tf(df,df_part,isTruth,loc,fNb):
+def make_tf(df):
     count=0
     tf_df=tf.zeros([1,1,1])
-
     for i in np.array(df.index.levels[0]):
-
         if (i%10000)==0:
             print('parsed '+str(i)+' events from '+str(np.array(df.index.levels[0]).shape[0]))
-            #if isTruth==True:
-            #    savefile(loc+"truth",fNb,tf_df)
-            #else:
-            #    savefile(loc+"hits",fNb,tf_df)
-                
-
         ev=df.xs(i,level='entry')
-        ev_part=df_part.xs(i,level='entry').to_numpy()
-
-        count,tf_df=add_to_tf(count,tf_df,ev,ev_part,isTruth)
+        count,tf_df=add_to_tf(count,tf_df,ev)
     return tf_df
 
 def savefile(loc,fNb,tf):
@@ -229,16 +189,16 @@ def savefile(loc,fNb,tf):
 #dataPath='/scratch/richardt/Tracker_EIC/data/out_graph_1.root'
 maxEvLengths=[]
 
-for fNb in range(2,10):
+for fNb in range(0,18):
 
     dataPath='/w/work5/home/simong/EIC/GraphData/out_graph_'+str(fNb)+'.root'
 
     print('\n\n New File:')
     print(dataPath)
 
-    loc="/scratch/richardt/Tracker_EIC/data/"
+    loc="/scratch/richardt/Tracker_EIC/data_v3/"
 
-    tf_hits,tf_truth=readFile(dataPath,loc,fNb)
+    tf_hits,tf_truth=readFile(dataPath)
 
     #scrap used to clean data after it was saved
     #tf_hits=tf.zeros([1,1,1])

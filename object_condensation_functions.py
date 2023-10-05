@@ -70,7 +70,8 @@ def toRaw(hits,truth):
 #returns: train and test arrays for hits and truth
 def make_dataset(path,nbs,NTest):
 
-    fileNbs=np.random.randint(0,9,nbs)
+    #change this to just one file when combining hits from different events
+    fileNbs=[0]#np.random.randint(0,9,nbs)
 
     all_hits=np.zeros((1,1,1))
     all_truth=np.zeros((1,1,1))
@@ -146,15 +147,19 @@ def load_data(path,nb):
     tf_hits=tf.zeros([1,1,1])
     tf_truth=tf.zeros([1,1,1])
 
-    with open(path+"hits_"+str(nb)+".pkl", "rb") as f:
+    with open(path+"hits_"+str(nb)+"_combinedEvents_wInEff_noised.pkl", "rb") as f:
         tf_hits = pickle.load(f)
 
-    with open(path+"truth_"+str(nb)+".pkl", "rb") as f:
+    with open(path+"truth_"+str(nb)+"_combinedEvents_wInEff_noised.pkl", "rb") as f:
         tf_truth = pickle.load(f)
 
 
-    tf_hits=tf_hits.to_tensor(default_value=0, shape=[None, 60,6])
-    tf_truth=tf_truth.to_tensor(default_value=0, shape=[None, 60,5])
+    #60 max size when using org data
+    #308 when combining hits from different events
+    #341 for v2/v3 data parsing with momentum and PID
+    tf_hits=tf_hits.to_tensor(default_value=0, shape=[None, 341,6])
+    #5 without pid, 7 with
+    tf_truth=tf_truth.to_tensor(default_value=0, shape=[None, 341,7])
 
     tf_hits=tf_hits.numpy()
     tf_truth=tf_truth.numpy()
@@ -166,7 +171,10 @@ def load_data(path,nb):
 # returns: model using gravnet layers.
 def make_model():
     #have vars x, y, layer, time, energy,  module
-    m_input = Input(shape=(60,4,),name='input1')#dtype=tf.float64
+    #60 max size when using org data
+    #308 when combining hits from different events
+    #341 for v2/v3 data parsing with momentum and PID
+    m_input = Input(shape=(341,4,),name='input1')#dtype=tf.float64
 
     #v = Dense(64, activation='elu',name='Dense0')(m_input)
 
@@ -196,8 +204,8 @@ def make_model():
     out_latent=Dense(2,name='out_latent')(v)
     #out_latent = Lambda(lambda x: x * 10.)(out_latent)
     out_mom=Dense(3,name='out_mom')(v)
-    #out=Concatenate(name='Concat2')([out_beta, out_latent,out_mom])
-    out=concatenate([out_beta, out_latent,out_mom])
+    out_PID=Dense(2,activation='softmax',name='out_pid')(v)
+    out=concatenate([out_beta, out_latent,out_mom,out_PID])
 
     model=keras.Model(inputs=m_input, outputs=out)
     
@@ -209,6 +217,7 @@ def make_model():
 #where to save the plot, string at end of save name
 def plot_latent_space(pred,truth,title_add,saveDir,endName):
 
+    #noise has truth[0]=9999
     pred= np.delete(pred, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
     truth= np.delete(truth, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
 
@@ -227,7 +236,9 @@ def plot_latent_space(pred,truth,title_add,saveDir,endName):
     
     #basic matplotlib color palette
     #assumes no more than 10 tracks per event, fine for now
-    colors=['blue','orange','green','red','purple','brown','pink','gray','olive','cyan']
+    #colors=['blue','orange','green','red','purple','brown','pink','gray','olive','cyan']
+    #using actual matplotlib color palettes
+    colors = plt.get_cmap('gist_ncar')
 
     bgCol=0
 
@@ -235,16 +246,16 @@ def plot_latent_space(pred,truth,title_add,saveDir,endName):
 
     #loop over tracks
     for i in unique_truth_objid:
-        scatter(pred_latent_x[truth_objid==i],pred_latent_y[truth_objid==i],colors[i],pred_beta[truth_objid==i],label='Track '+str(i),s=200)
+        scatter(pred_latent_x[truth_objid==i],pred_latent_y[truth_objid==i],colors(i*7),pred_beta[truth_objid==i],label='Track '+str(i),s=200)
         bgCol=i+1
 
     #plot noise
-    #scatter(pred_latent_x[truth_objid==9999],pred_latent_y[truth_objid==9999],'black',pred_beta[truth_objid==9999],label='Noise',s=200)
+    scatter(pred_latent_x[truth_objid==9999],pred_latent_y[truth_objid==9999],'black',pred_beta[truth_objid==9999],label='Noise',s=200)
 
     plt.title('Learned Latent Space '+title_add)
     plt.ylabel('Coordinate 1 [AU]')
     plt.xlabel('Coordinate 0 [AU]')
-    plt.legend(loc='upper left')
+    #plt.legend(loc='upper left')
     #plt.show()
     plt.savefig(saveDir+'latentSpace'+endName+'.png')
 
@@ -255,6 +266,20 @@ def scatter(x, y, color, alpha_arr, **kwarg):
     # r, g, b, _ = to_rgba(color)
     color = [(r, g, b, alpha) for alpha in alpha_arr]
     plt.scatter(x, y, c=color, **kwarg)
+
+#make plot of PID response of matched tracks
+#arguments: network prediction, truth (noise and obj number), add something to title (ie epoch nb N)
+#where to save the plot, string at end of save name
+def plot_PID_response(pred,truth,title_add,saveDir,endName):
+
+    fig = plt.figure(figsize=(20,20))
+    plt.hist(pred[truth==1], range=[0,1],bins=100,color='royalblue', label='Quasi-Real')
+    plt.hist(pred[truth==0], range=[0,1],bins=100, edgecolor='firebrick',label='Bremsstrahlung',hatch='/',fill=False)
+    plt.legend(loc='upper center')#can change upper to lower and center to left or right
+    plt.xlabel('Response')
+    plt.yscale('log', nonpositive='clip')
+    plt.title('Electron ID Response')
+    plt.savefig(saveDir+'resp_epoch'+endName+'.png')
 
 #plot training history
 #arguments: history, contains loss and val_loss as a function of epochs, 
@@ -371,8 +396,8 @@ def plotMomentum(true_momentum,pred_momentum,saveDir,endName,title_add):
     plt.savefig(saveDir+'Py'+endName+'.png')
     
     fig = plt.figure(figsize=(20, 20))
-    plt.hist(true_momentum[:,2], range=[-20,20],bins=100,label='True')
-    plt.hist(pred_momentum[:,2], range=[-20,20],bins=100,edgecolor='red',hatch='/',fill=False,label='Predicted')
+    plt.hist(true_momentum[:,2], range=[50,400],bins=100,label='True')
+    plt.hist(pred_momentum[:,2], range=[50,400],bins=100,edgecolor='red',hatch='/',fill=False,label='Predicted')
     plt.legend(loc='upper right')
     plt.xlabel('Z Momentum [AU]')
     plt.title('Z Momentum '+title_add)
@@ -383,29 +408,11 @@ def gaussFit(x, *p):
     return A*np.exp(-(x-mu)**2/(2.*sigma**2))
 
 def getResSigma(res,Range):
-    #n,xedges = np.histogram(res,range=Range,bins=100)
-    #fit_bin_centers= (xedges[:-1] + xedges[1:])/2
-
-    #p0 = [1., 0., 1]#For Degrees
-    #if Range[0]>1:
-    #    p0 = [1., 0., 0.001]#For Radians
-    #coeff, var_matrix = curve_fit(gaussFit, xdata=fit_bin_centers, ydata=n, p0=p0)
-    #perr = np.sqrt(np.diag(var_matrix))
-
-    #mean=coeff[1]
-    #meanErr=perr[1]
-    #sigma=np.absolute(coeff[2])
-    #sigmaErr=np.absolute(perr[2])
-
-    #while i figure out the fitting
-    #sigma=np.absolute(np.std(res))((A - B)**2).mean(axis=ax)
+    #for now use mse
     sigma=(res**2).mean()
     sigmaErr=0
 
     return (sigma,sigmaErr)
-
-    
-
 
 #split dataset into training and testing sets
 
@@ -457,13 +464,15 @@ def train_GNet_trackID(saveDir,endName,loadPath,fileNbs):
 
     AvEff=[]
     AvPur=[]
+    AvEffPID=[]
+    AvPurPID=[]
     XRes=[]
     YRes=[]
     ZRes=[]
     supEpochs=[]
 
     #do batches of super epochs for training
-    for i in range(0,15):#15#20
+    for i in range(0,15):#15
 
         #train
         history=model.fit(hits_train,y_train,epochs=nEpochs, validation_data=(hits_test, y_test), verbose=1)
@@ -476,23 +485,27 @@ def train_GNet_trackID(saveDir,endName,loadPath,fileNbs):
 
         #test model by getting purity and efficiency of event
         #hardcoded for now, should think of changing this
-        eff,pur,res,true_momentum,pred_momentum=test_GNet(hits_test,y_test,model,False)
+        eff,pur,res,true_momentum,pred_momentum,effPID,purPID,true_PID,pred_PID=test_GNet(hits_test,y_test,model,False)
         AvEff.append(eff)
         AvPur.append(pur)
+        AvEffPID.append(effPID)
+        AvPurPID.append(purPID)
         XRes.append(getResSigma(res[:,0],(-0.05,0.05)))
         YRes.append(getResSigma(res[:,1],(-0.05,0.05)))
         ZRes.append(getResSigma(res[:,2],(-20,20)))
         supEpochs.append(i*nEpochs+nEpochs)
         plotMetrics_vEpochs(AvEff,AvPur,supEpochs,saveDir,endName)
+        plotMetrics_vEpochs(AvEffPID,AvPurPID,supEpochs,saveDir,endName+'_PID')
         plotRes_vEpochs(XRes,YRes,ZRes,supEpochs,saveDir,endName)
         plotRes(res,saveDir,endName+'_supEpoch'+str(i),'(Epoch '+str(i*nEpochs+nEpochs)+')')
         plotMomentum(true_momentum,pred_momentum,saveDir,endName+'_supEpoch'+str(i),'(Epoch '+str(i*nEpochs+nEpochs)+')')
+        plot_PID_response(pred_PID,true_PID,'(Epoch '+str(i*nEpochs+nEpochs)+')',saveDir,endName+'_supEpoch'+str(i))
 
         model.save_weights("models/condensation_network_ep"+str(i),save_format='tf')
 
-        hits_train,hits_test,y_train,y_test=make_dataset(loadPath,fileNbs,5000)
+        #hits_train,hits_test,y_train,y_test=make_dataset(loadPath,fileNbs,5000)
 
-    eff,pur,res,true_momentum,pred_momentum=test_GNet(hits_test,y_test,model,True)
+    eff,pur,res,true_momentum,pred_momentum,effPID,purPID,true_PID,pred_PID=test_GNet(hits_test,y_test,model,True)
     
     return model
 
@@ -508,11 +521,17 @@ def load_model(name):
 #apply gravnet model to hits & truth from single event, returns set of tracks for event
 #arguments: model, hits,threshold to select condesation points, max dist in 
 #latent space
-#returns: predicted tracks
+#returns: predicted tracks, momentum, PID and time to evaluate
 def apply_GNet_trackID(track_identifier,hits,truth,beta_thresh,cutDist):
+    t0 = time.time()
     pred = track_identifier.predict(hits.reshape((1,hits.shape[0],hits.shape[1])))
-    tracks=make_tracks_from_pred(hits,pred,truth,beta_thresh,cutDist)
-    return tracks
+    t1 = time.time()
+    tracks,momentum,PID=make_tracks_from_pred(hits,pred,truth,beta_thresh,cutDist)
+    t2 = time.time()
+
+    time_pred=t1-t0
+    time_track=t2-t1
+    return tracks,momentum,PID,time_pred,time_track
 
 #get all tracks in an event from object condensation prediction
 #idea is there's one condensation point per track which has the highest 
@@ -526,6 +545,7 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
 
     pred=pred.reshape((pred.shape[1],pred.shape[2]))
 
+    #noise has truth[:,0]=9999
     pred= np.delete(pred, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
     hits= np.delete(hits, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
     truth= np.delete(truth, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
@@ -533,10 +553,12 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
     vmax=pred.shape[0]
     all_tracks=np.zeros((1,8))
     all_momentum=np.zeros((1,3))
+    all_PID=np.zeros((1,1))
 
     #1:3 for 2 latent dims. 1:4 for 3 latent dims, etc
     pred_latent_coords=pred[:,1:3].reshape((vmax,2))
     pred_mom=pred[:,3:6].reshape((vmax,3))
+    pred_PID=pred[:,6:7].reshape((vmax,1))
     pred_beta=pred[:,0].reshape((vmax))
     hits_event=hits[:,:].reshape((vmax,hits.shape[1]))
     
@@ -544,15 +566,19 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
     #we group other hits around these based on latent space distance
     cond_points_lc=pred_latent_coords[pred_beta>beta_thresh]
     cond_points_mom=pred_mom[pred_beta>beta_thresh]
+    cond_points_PID=pred_PID[pred_beta>beta_thresh]
     other_lc=pred_latent_coords[pred_beta<beta_thresh]
     cond_points_hits=hits_event[pred_beta>beta_thresh]
     other_hits=hits_event[pred_beta<beta_thresh]
 
     #print(other_hits.shape)
     #print(cond_points_hits.shape)
+
+    added_tracks=0
         
     #loop over condensation points
     for j in range(0,cond_points_lc.shape[0]):
+
         dist_lc=np.zeros((other_lc.shape[0]))+1000
         #loop over other elements to assign distance
         for k in range(0,other_lc.shape[0]):
@@ -565,6 +591,7 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
             dist_lc[k]=math.sqrt(dif_x**2+dif_y**2)#+dif_z**2
 
         momentum=np.zeros((1,3))
+        PID=np.zeros((1,1))
         track=np.zeros((1,8))
         #find best hit in each layer
         for k in range(1,5):
@@ -592,6 +619,7 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
                 if(dist_lc_layer[0]<distCut):
                     track[0,(k-1)*2]=other_hits_layer[0,0]
                     track[0,(k-1)*2+1]=other_hits_layer[0,1]
+                    
         
         #replace closest point in same layer as condensation point
         #with condensation point which is actually best hit
@@ -601,15 +629,27 @@ def make_tracks_from_pred(hits,pred,truth,beta_thresh,distCut):
         momentum[0,0]=cond_points_mom[j,0]
         momentum[0,1]=cond_points_mom[j,1]
         momentum[0,2]=cond_points_mom[j,2]
-        
-        if j==0:
-            all_tracks=track
-            all_momentum=momentum
-        else:
-            all_tracks=np.vstack((all_tracks,track))
-            all_momentum=np.vstack((all_momentum,momentum))
+        PID[0,0]=cond_points_PID[j,0]
 
-    return all_tracks,all_momentum
+        #want to count how many hits added to a track
+        #at least one, the condensation point
+        #two entries per hit so divide by two
+        added_hit=np.count_nonzero(track)/2
+
+        #want more than one hit per track
+        if added_hit>1:
+            if added_tracks==0:
+                added_tracks=1
+                all_tracks=track
+                all_momentum=momentum
+                all_PID=PID
+            else:
+                all_tracks=np.vstack((all_tracks,track))
+                all_momentum=np.vstack((all_momentum,momentum))
+                all_PID=np.vstack((all_PID,PID))
+                added_tracks=added_tracks+1
+
+    return all_tracks,all_momentum,all_PID
 
 #get all true tracks in an event
 #arguments: all hits, truth info for one single event
@@ -619,6 +659,7 @@ def make_true_tracks(hits,truth):
     #print(hits)
     #print(truth)
 
+    #noise has truth[:,0]=9999
     hits= np.delete(hits, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
     truth= np.delete(truth, np.where((truth[:,0]==0) & (truth[:,1]==0))[0], axis=0)
 
@@ -628,11 +669,14 @@ def make_true_tracks(hits,truth):
     vmax=hits.shape[0]
     all_tracks=np.zeros((1,8))
     all_momentum=np.zeros((1,3))
+    all_PID=np.zeros((1,1))
 
     truth_objid=truth[:,0].reshape((vmax))
 
     unique_truth_objid=np.unique(truth_objid)
     unique_truth_objid=np.rint(unique_truth_objid).astype(int)
+    #don't want to make track from noise
+    unique_truth_objid=unique_truth_objid[unique_truth_objid!=9999]
 
     #print(truth_objid.shape)
     #print(hits.shape)
@@ -654,33 +698,46 @@ def make_true_tracks(hits,truth):
 
         #all hits associated with an object have same true momentum
         momentum=np.zeros((1,3))
+        PID=np.zeros((1,1))
         momentum[0,0]=truth_pObj[0,2]
         momentum[0,1]=truth_pObj[0,3]
         momentum[0,2]=truth_pObj[0,4]
+        PID[0,0]=truth_pObj[0,5]
+        
+        #want to count how many hits added to a track
+        #two entries per hit so divide by two
+        added_hit=np.count_nonzero(track)/2
 
-        if nTracks==0:
-            all_tracks=track
-            all_momentum=momentum
-        else:
-            all_tracks=np.vstack((all_tracks,track))
-            all_momentum=np.vstack((all_momentum,momentum))
-        nTracks=nTracks+1
+        #want more than one hit per track
+        if added_hit>1:
+            if nTracks==0:
+                all_tracks=track
+                all_momentum=momentum
+                all_PID=PID
+            else:
+                all_tracks=np.vstack((all_tracks,track))
+                all_momentum=np.vstack((all_momentum,momentum))
+                all_PID=np.vstack((all_PID,PID))
+            nTracks=nTracks+1
 
-    return all_tracks,all_momentum
+    return all_tracks,all_momentum,all_PID
     
 
 #calculate metrics like track efficiency, and purity for one event
 #efficiency defined as percentage of true tracks that survive
 #purity defined as ratio of false tracks over all predicted tracks
 #then calculate resolution on matched tracks
-#arguments: true tracks and predicted tracks, true momentum and predicted momentum
-#returns purity and efficiency and resolution in x,y,z
-def calculate_GNet_metrics(true_tracks,selected_tracks,true_momentum,pred_momentum):
+#arguments: true tracks and predicted tracks, true momentum and predicted momentum, true PID of true tracks and predicted PID of predicted tracks
+#returns purity and efficiency and resolution in x,y,z, true and predicted
+#PID of matched tracks (ordered in the same way)
+def calculate_GNet_metrics(true_tracks,selected_tracks,true_momentum,pred_momentum,true_PID,pred_PID):
     TP=0
     FP=0
     FN=0
     
     res=np.zeros((selected_tracks.shape[0],3))+9999
+    matched_true_PID=[]
+    matched_pred_PID=[]
     for i in range(0,selected_tracks.shape[0]):
         matched=False
         for j in range(0,true_tracks.shape[0]):
@@ -689,6 +746,8 @@ def calculate_GNet_metrics(true_tracks,selected_tracks,true_momentum,pred_moment
             if(np.array_equal(selected_tracks[i],true_tracks[j])):
                 matched=True
                 res[i]=true_momentum[j]-pred_momentum[i]
+                matched_true_PID.append(true_PID[j,0])
+                matched_pred_PID.append(pred_PID[i,0])
             
         if matched==True:
             TP=TP+1
@@ -697,18 +756,52 @@ def calculate_GNet_metrics(true_tracks,selected_tracks,true_momentum,pred_moment
 
     #remove unmatched rows
     res = np.delete(res, np.where(res[:, 0]==9999)[0], axis=0)
-    res[:, 2]=res[:, 2]*20
+    #res[:, 2]=res[:, 2]*20
             
     eff=TP/true_tracks.shape[0]
     FP_eff=TP/(TP+FP)
-    return eff, FP_eff,res
+    return eff, FP_eff,res,np.array(matched_true_PID),np.array(matched_pred_PID)
 
+#calculate the PID efficiency and purity, for tracks that were matched
+#arguments: the true and predicted PID of tracks that were matched,
+#threshold on response
+#returns: the efficiency and purity
+def calculate_PID_metrics(matched_true_PID,matched_pred_PID,thresh):
+    TP=0
+    TN=0
+    FN=0
+    FP=0
+    ind=0
+
+    pos=matched_pred_PID[matched_true_PID==1]
+    neg=matched_pred_PID[matched_true_PID==0]
+
+    TP_arr=pos[pos>thresh]
+    FN_arr=pos[pos<=thresh]
+
+    TN_arr=neg[neg<=thresh]
+    FP_arr=neg[neg>thresh]
+
+    TP=TP_arr.shape[0]
+    FP=FP_arr.shape[0]
+    FN=FN_arr.shape[0]
+    TN=TN_arr.shape[0]
+
+    pur=0
+    if (TP+FP)!=0:
+        pur=TP/(TP+FP)
+    eff=0
+    if (TP+FN)!=0:
+        eff=TP/(TP+FN)
+
+    return eff,pur
 
 #test the object condensation method by generating n events
 #and calculating efficiency, purity and mesuring prediciton times
 #arguments: test arrays, GNet model
 # whether or not to print average eff,pur, res and times
-#return: efficiency and purity averaged over nb test events.
+#return: efficiency and purity averaged over nb test events, resolution,
+#and PID purity and efficiency, and predicted and truth PID of matched tracks
 def test_GNet(hits,truth,model,doPrint):
 
     #hits=hits[0:1000,:,:]
@@ -716,6 +809,8 @@ def test_GNet(hits,truth,model,doPrint):
 
     AvEff=0
     AvPur=0
+    AvEffPID=0
+    AvPurPID=0
 
     AvTime_getEvent=0
     AvTime_getCandidates=0
@@ -725,40 +820,51 @@ def test_GNet(hits,truth,model,doPrint):
 
     all_true_momentum=np.zeros((1,3))
     all_pred_momentum=np.zeros((1,3))
+    all_true_PID=np.zeros((1,1))
+    all_pred_PID=np.zeros((1,1))
 
     for i in range(hits.shape[0]):
-        #timing to apply ID selecting only tracks with best response
-        t0_apply = time.time()
+        
+        pred_tracks,pred_momentum,pred_PID,pred_time,track_time=apply_GNet_trackID(model,hits[i].copy(),truth[i].copy(),0.1,1.0)
 
-        pred_tracks,pred_momentum=apply_GNet_trackID(model,hits[i].copy(),truth[i].copy(),0.1,0.5)
+        AvTime_apply=AvTime_apply+(pred_time+track_time)
 
-        t1_apply = time.time()
-        AvTime_apply=AvTime_apply+(t1_apply-t0_apply)
+        true_tracks,true_momentum,true_PID=make_true_tracks(hits[i].copy(),truth[i].copy())
 
-        true_tracks,true_momentum=make_true_tracks(hits[i].copy(),truth[i].copy())
+        eff,pur,res,matched_true_PID,matched_pred_PID=calculate_GNet_metrics(true_tracks,pred_tracks,true_momentum,pred_momentum,true_PID,pred_PID)
 
-        eff,pur,res=calculate_GNet_metrics(true_tracks,pred_tracks,true_momentum,pred_momentum)
+        effPID,purPID=calculate_PID_metrics(matched_true_PID,matched_pred_PID,0.5)
 
         if i==0:
             all_res=res
             all_true_momentum=true_momentum
             all_pred_momentum=pred_momentum
+            all_true_PID=matched_true_PID
+            all_pred_PID=matched_pred_PID
         else:
             all_res=np.vstack((all_res,res))
             all_true_momentum=np.vstack((all_true_momentum,true_momentum))
             all_pred_momentum=np.vstack((all_pred_momentum,pred_momentum))
+            all_true_PID=np.hstack((all_true_PID,matched_true_PID))
+            all_pred_PID=np.hstack((all_pred_PID,matched_pred_PID))
 
         AvEff=AvEff+eff
         AvPur=AvPur+pur
+        AvEffPID=AvEffPID+effPID
+        AvPurPID=AvPurPID+purPID
 
     #average metrics, nb of tracks and times
     AvEff=AvEff/hits.shape[0]
     AvPur=AvPur/hits.shape[0]
+    AvEffPID=AvEffPID/hits.shape[0]
+    AvPurPID=AvPurPID/hits.shape[0]
 
 
     AvTime_getEvent=AvTime_getEvent/hits.shape[0]
     AvTime_getCandidates=AvTime_getCandidates/hits.shape[0]
     AvTime_apply=AvTime_apply/hits.shape[0]
+
+    
 
     if doPrint==True:
 
@@ -767,10 +873,12 @@ def test_GNet(hits,truth,model,doPrint):
         print('Fraction of true tracks in all predicted tracks '+str(AvPur))
         print('X, Y, Z momentum resolution:')
         print(str(getResSigma(res[:,0],(-0.01,0.01)))+' '+str(getResSigma(res[:,1],(-0.01,0.01)))+' '+str(getResSigma(res[:,2],(-0.01,0.01))))
+        print('PID efficiency '+str(AvEffPID))
+        print('PID purity '+str(AvPurPID))
 
         print('')
         print('Generating an event took on average '+str(AvTime_getEvent)+'s')
         print('Getting array of hits took on average '+str(AvTime_getCandidates)+'s')
         print('Applying the track ID took on average '+str(AvTime_apply)+'s')
         
-    return AvEff,AvPur,all_res,all_true_momentum,all_pred_momentum
+    return AvEff,AvPur,all_res,all_true_momentum,all_pred_momentum,AvEffPID,AvPurPID,all_true_PID,all_pred_PID

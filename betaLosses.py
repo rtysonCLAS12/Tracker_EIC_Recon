@@ -37,17 +37,29 @@ def create_pixel_loss_dict(truth, pred):
     outdict['p_ccoords'] = pred[:,:,1:3]#1:3 for 2 dims, 1:4 for 3 dims
     outdict['p_mom'] = pred[:,:,3:5]
     outdict['p_mom_z'] = pred[:,:,5:6]
+    outdict['p_ID'] = pred[:,:,6:8]
     outdict['t_mask'] =  truth[:,:,1:2]
     outdict['t_objidx']= truth[:,:,0:1]
     outdict['t_mom']= truth[:,:,2:4]
     outdict['t_mom_z']= truth[:,:,4:5]
+    outdict['t_ID'] = truth[:,:,5:7]
+    
+    #objidx=9999 for noise, 0 for padding
+    outdict['t_padding']= tf.where(tf.abs(outdict['t_objidx'])<0.2, tf.zeros_like(outdict['t_mask']), tf.zeros_like(outdict['t_mask'])+1)
     
     flattened = tf.reshape(outdict['t_mask'],(tf.shape(outdict['t_mask'])[0],-1))
     outdict['n_nonoise'] = tf.expand_dims(tf.cast(tf.math.count_nonzero(flattened, axis=-1), dtype='float32'), axis=1)
-    #will have a meaning for non toy model
-    #outdict['n_active'] = tf.zeros_like(outdict['n_nonoise'])+64.*64.
-    outdict['n_noise'] =  tf.cast(tf.shape(outdict['t_mask'])[1], dtype='float32') -outdict['n_nonoise']
-    outdict['n_total'] = outdict['n_noise']+outdict['n_nonoise']
+
+    
+    #when using padding
+    flattened_pad = tf.reshape(outdict['t_padding'],(tf.shape(outdict['t_padding'])[0],-1))
+    outdict['n_total'] = tf.expand_dims(tf.cast(tf.math.count_nonzero(flattened_pad, axis=-1), dtype='float32'), axis=1)
+    outdict['n_noise'] =outdict['n_total']-outdict['n_nonoise']
+
+
+    #when not using padding
+    #outdict['n_noise'] =  tf.cast(tf.shape(outdict['t_mask'])[1], dtype='float32') -outdict['n_nonoise']
+    #outdict['n_total'] = outdict['n_noise']+outdict['n_nonoise']
     
     
     return outdict
@@ -80,6 +92,29 @@ def energy_z_corr_loss(d,payload_scaling,Nobj):
     
     return beta_weighted_truth_mean(eloss,d,payload_scaling,Nobj)#>0
 
+def cross_entr_loss(d, beta_scaling,Nobj):
+    tID = d['t_mask']*d['t_ID']
+    tID = tf.where(tID<=0.,tf.zeros_like(tID)+10*K.epsilon(),tID)
+    tID = tf.where(tID>=1.,tf.zeros_like(tID)+1.-10*K.epsilon(),tID)
+    pID = d['t_mask']*d['p_ID']
+    pID = tf.where(pID<=0.,tf.zeros_like(pID)+10*K.epsilon(),pID)
+    pID = tf.where(pID>=1.,tf.zeros_like(pID)+1.-10*K.epsilon(),pID)
+
+    #have 15493 qr electrons hits
+    #and 1689507 brehm electrons hits
+    #weight=total_samples / (num_samples_in_class_i * num_classes)
+    #weight for quasi-real electrons 55.02
+    #weight for brehmsstralung electrons 0.504
+
+    weight=tf.where(tID[:,:,0:1]==1,55.02,0.504)
+    
+    xentr = weight*d['t_mask']*beta_scaling * (-1.)* tf.reduce_sum(tID * tf.math.log(pID) ,axis=-1, keepdims=True)
+    
+    #xentr_loss = mean_nvert_with_nactive(d['t_mask']*xentr, d['n_nonoise'])
+    #xentr_loss = tf.reduce_mean(tf.reduce_sum(d['t_mask']*xentr, axis = 1), axis=-1)
+    return beta_weighted_truth_mean(xentr,d,beta_scaling,Nobj)
+    #return tf.reduce_mean(xentr_loss)
+
 def p_loss(d, beta_scaling,Nobj):
     dPos = d['p_mom'] - d['t_mom'] #B x V x 2
     posl = tf.reduce_sum( dPos**2, axis=-1, keepdims=True )#*d['t_mask'] ??
@@ -104,7 +139,8 @@ def sub_object_condensation_loss(d,q_min,Ntotal=4096):
     #max_obj=tf.argmax(d['t_objidx'])+1
     #print('max number of objects',max_obj)
     
-    for k in range(1,20):#maximum number of objects
+    #maximum number of objects, 20 with org files, 83 when combining hits from different events, 96 with v2 data parsing
+    for k in range(1,96):
         
         Mki      = tf.where(tf.abs(d['t_objidx']-float(k))<0.2, tf.zeros_like(q)+1, tf.zeros_like(q))
         
@@ -147,7 +183,7 @@ def sub_object_condensation_loss(d,q_min,Ntotal=4096):
     #L_att/=Nobj
     #L_rep/=Nobj
     
-    L_suppnoise = tf.squeeze(tf.reduce_sum( (1.-d['t_mask'])*d['p_beta'] , axis=1) / (d['n_noise'] + K.epsilon()), axis=1)
+    L_suppnoise = tf.squeeze(tf.reduce_sum(d['t_padding']*(1.-d['t_mask'])*d['p_beta'] , axis=1) / (d['n_noise'] + K.epsilon()), axis=1)
     
     reploss = tf.reduce_mean(L_rep)
     attloss = tf.reduce_mean(L_att)
@@ -176,24 +212,23 @@ def object_condensation_loss(truth,pred):
 
     p_loss_val=tf.reduce_mean(energy_corr_loss(d,payload_scaling,Nobj))
     pz_loss_val=tf.reduce_mean(energy_z_corr_loss(d,payload_scaling,Nobj))
-    
-    #better purity, worse efficiency
-    #loss = attloss + 0.5*(reploss + betaloss + supress_noise_loss)
-    
-    #good efficiency, worse purity
-    #loss = attloss + 0.5*(reploss + betaloss ) + 0.1*supress_noise_loss
+    PID_loss = tf.reduce_mean(cross_entr_loss(d,payload_scaling,Nobj))
 
-    #no noise, no p
+    #w noise, no p, no pid
+    loss= 0.1*(attloss + reploss + supress_noise_loss) + betaloss
+
+    #w noise & PID, no p
+    #loss= 0.1*(attloss + reploss + supress_noise_loss + PID_loss) + betaloss
+
+    #no noise, no p, no PID
     #loss= 0.1*(attloss + reploss ) + betaloss
 
     #only p
     #loss=p_loss_val
 
 
-    #no noise, splitting p into px/py and pz
-    #loss= 0.1*(attloss + reploss ) + betaloss + 0.00000001*p_loss_val +0.001*pz_loss_val
-
-    loss= 0.1*(attloss + reploss ) + betaloss + 0.01*p_loss_val +0.01*pz_loss_val
+    #splitting p into px/py and pz
+    #loss= 0.1*(attloss + reploss + supress_noise_loss) + betaloss + 0.1*p_loss_val +0.1*pz_loss_val
     
     #loss = tf.Print(loss,[loss,
     #                          reploss,
