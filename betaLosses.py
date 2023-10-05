@@ -214,21 +214,20 @@ def object_condensation_loss(truth,pred):
     pz_loss_val=tf.reduce_mean(energy_z_corr_loss(d,payload_scaling,Nobj))
     PID_loss = tf.reduce_mean(cross_entr_loss(d,payload_scaling,Nobj))
 
+    #no noise, no p, no PID
+    loss= 0.1*(attloss + reploss ) + betaloss
+
     #w noise, no p, no pid
-    loss= 0.1*(attloss + reploss + supress_noise_loss) + betaloss
+    #loss= 0.1*(attloss + reploss + supress_noise_loss) + betaloss
 
     #w noise & PID, no p
     #loss= 0.1*(attloss + reploss + supress_noise_loss + PID_loss) + betaloss
 
-    #no noise, no p, no PID
-    #loss= 0.1*(attloss + reploss ) + betaloss
-
     #only p
     #loss=p_loss_val
 
-
     #splitting p into px/py and pz
-    #loss= 0.1*(attloss + reploss + supress_noise_loss) + betaloss + 0.1*p_loss_val +0.1*pz_loss_val
+    #loss= 0.1*(attloss + reploss + supress_noise_loss + PID_loss) + betaloss + 0.1*p_loss_val +0.1*pz_loss_val
     
     #loss = tf.Print(loss,[loss,
     #                          reploss,

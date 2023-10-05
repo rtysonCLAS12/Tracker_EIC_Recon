@@ -3,7 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_rgb, to_rgba
 from matplotlib.colors import LogNorm
-from object_condensation_functions import load_data,norm,unnorm,toRaw
+
 
 #nicer plotting style
 plt.rcParams.update({'font.size': 30,
@@ -16,7 +16,58 @@ plt.rcParams.update({'font.size': 30,
                     'ytick.major.size':15,
                      'ytick.minor.size':10})
 
-def plot_momentum(truth,saveDir,endName):
+def make_hist(var,binRange,nBins,title,saveName,saveDir,endName):
+    fig = plt.figure(figsize=(20, 20))
+    plt.hist(var, range=binRange,bins=nBins)
+    plt.xlabel(title)
+    plt.title(title)
+    plt.savefig(saveDir+saveName+endName+'.png')
+
+def hist_params(hits,truth,saveDir,endName):
+
+    NLayers=[]
+    NNoise=[]
+    NTracks=[]
+    PID_pos=[]
+    PID_neg=[]
+
+    for i in range(hits.shape[0]):
+        hits_ev=hits[i].copy()
+        truth_ev=truth[i].copy()
+
+        truth_objid=truth_ev[:,0].reshape((truth_ev.shape[0]))
+        #print('truthID')
+        #print(truth_objid)
+        unique_truth_objid=np.unique(truth_objid)
+
+        #don't want to use noise in calc of NLayers
+        #or calc of NTracks
+        unique_truth_objid=unique_truth_objid[unique_truth_objid!=9999]
+        
+        #get the number of layers hit in each track
+        for ID in unique_truth_objid:
+            NLayers.append(truth_objid[truth_objid==ID].shape[0])
+
+        truth_objid_fn=truth_ev[:,0].reshape((truth_ev.shape[0]))
+        truth_objid_fn=truth_objid_fn[truth_objid_fn==9999]
+        NNoise.append(truth_objid_fn.shape[0])
+
+        NTracks.append(len(unique_truth_objid))
+
+        truth_pid=truth_ev[:,5]
+        PID_pos.append(len(truth_pid[truth_pid==1]))
+        PID_neg.append(len(truth_pid[truth_pid==0]))
+
+    make_hist(NTracks,[0,100],100,'Number of Tracks per Event','NTracks',saveDir,endName)
+    make_hist(NLayers,[2,5],3,'Number of Layers per Track','NLayers',saveDir,endName)
+    make_hist(NNoise,[0,300],150,'Number of Noise Hits per Event','NNoise',saveDir,endName)
+    make_hist(PID_pos,[0,50],50,'Number of Quasi-real Electron Hits per Event','PID_pos',saveDir,endName)
+    make_hist(PID_neg,[0,300],300,'Number of Bremsstrahlung Electron Hits per Event','PID_neg',saveDir,endName)
+    print('Number of Quasi-real electrons in total: '+str(sum(PID_pos)))
+    print('Number of Bremsstrahlung electrons in total: '+str(sum(PID_neg)))
+            
+
+def plot_momentum_single(truth,saveDir,endName):
     fig = plt.figure(figsize=(20, 20))
     #_raw_FFile and _raw
     plt.hist(truth[:,2], range=[-0.01,0.01],bins=100,label='True')
@@ -128,56 +179,10 @@ def plot_time_energy(hits,saveDir,endName):
     plt.savefig(saveDir+'Energy'+endName+'.png')
 
 
-hits,truth=load_data('/scratch/richardt/Tracker_EIC/data_v3/',0)
-
-saveDir='/home/richardt/public_html/Tracker_EIC/vars_v3/'
-
-endName='_raw'#_Normed#_raw_FFile#_raw
-
-hits=hits[0:1000,:,:]
-truth=truth[0:1000,:,:]
-
-#None for _raw_FFile
-
-#for Normed
-#hits,truth=norm(hits,truth)
-
-#for _raw
-hits,truth=toRaw(hits,truth)
-
-print(hits.shape)
-print(truth.shape)
-
-hits_2d=np.zeros((1,1))
-truth_2d=np.zeros((1,1))
-
-for i in range(hits.shape[0]):
-
-    hits_ev=hits[i]
-
-    truth_ev=truth[i]
-
-    hits_ev= np.delete(hits_ev, np.where((truth_ev[:,0]==0) & (truth_ev[:,1]==0))[0], axis=0)
-    truth_ev= np.delete(truth_ev, np.where((truth_ev[:,0]==0) & (truth_ev[:,1]==0))[0], axis=0)
-
-    hits_ev= np.delete(hits_ev, np.where((truth_ev[:,0]==9999))[0], axis=0)
-    truth_ev= np.delete(truth_ev, np.where((truth_ev[:,0]==9999))[0], axis=0)
-
-    if i==0:
-        hits_2d=hits_ev
-        truth_2d=truth_ev
-    else:
-        hits_2d=np.vstack((hits_2d,hits_ev))
-        truth_2d=np.vstack((truth_2d,truth_ev))
 
 
 
-plot_momentum(truth_2d,saveDir,endName)
-    
-plot_time_energy(hits_2d,saveDir,endName)
 
-plot_hit_loc(hits_2d,saveDir,endName)
 
-plot_PThetaPhi(truth_2d,saveDir,endName)
 
 

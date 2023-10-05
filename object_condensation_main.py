@@ -2,7 +2,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import time
-from object_condensation_functions import train_GNet_trackID,test_GNet
+from object_condensation_functions import train_GNet_trackID
 
 #nicer plotting style
 plt.rcParams.update({'font.size': 30,
@@ -24,5 +24,5 @@ endName=''
 
 fileNbs=3
 
-GNet_track_identifier=train_GNet_trackID(saveDir,endName,dataPath,fileNbs)
+GNet_track_identifier=train_GNet_trackID(saveDir,endName,dataPath,fileNbs,"_combinedEvents_wInEff")#_combinedEvents_wInEff_noised
 

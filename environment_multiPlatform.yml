@@ -1,0 +1,11 @@
+name: tfEnvGPU
+channels:
+  - defaults
+dependencies:
+  - tensorflow-gpu
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - uproot
+  - keras-tuner
+prefix: /home/richardt/.conda/envs/tfEnvGPU
