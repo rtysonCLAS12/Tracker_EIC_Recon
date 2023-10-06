@@ -37,12 +37,12 @@ dataPath='/scratch/richardt/Tracker_EIC/data_v3/'
 nbs=[0]#9
 
 #only want to use testing set here
-truth_train,hits,truth_train,truth=make_dataset(dataPath,nbs,5000,'_combinedEvents_wInEff')
+truth_train,hits,truth_train,truth=make_dataset(dataPath,nbs,5000,'_combinedEvents_wInEff_noised')
 
-model=load_model('best_models/track_creationOnly_noTimeNoEnergy_combinedEvents_wInEff/condensation_network_ep1')#_wInEff _noised _V3
+model=load_model('best_models/track_creationOnly_noTimeNoEnergy_combinedEvents_wInEff_noised/condensation_network_ep4')#_wInEff _noised _V3
 
 saveDir='/home/richardt/public_html/Tracker_EIC/object_condensation/track_creationOnly/'
-endNameBase='_noTimeNoEnergy_combinedEvents_wInEff'#_wInEff _noised _v5
+endNameBase='_noTimeNoEnergy_combinedEvents_wInEff_noised'#_wInEff _noised _v5
 
 print(str(hits.shape)+' '+str(truth.shape))
 

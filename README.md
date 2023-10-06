@@ -57,7 +57,9 @@ Code to apply some tests to a trained model (eg metrics as a function of the num
 
 # best_models
 
-Some saved models. _combinedEvents_wInEff uses the output of the combine_events and add_efficiency_toData scripts. _combinedEvents_wInEff_noised uses the output of the combine_events, add_efficiency_toData and add_noise_toData scripts. 
+Some saved models. 
+
+_combinedEvents_wInEff_noised uses the output of the combine_events, add_efficiency_toData and add_noise_toData scripts. Recommend ep 4.
 
 # Dependencies
 
