@@ -49,7 +49,7 @@ Code adapted from https://github.com/jkiesele/SOR to calculate the object conden
 
 # object_condensation_functions
 
-Code to train the object condensation model, read in by object_condensation_main. Will also test the model as a function of epoch. Note that we train in batches of epochs (ie 15 batches of 40 epochs).
+Code to train the object condensation model, read in by object_condensation_main. Will also test the model as a function of epoch. Note that we train in batches of epochs (ie 15 batches of 40 epochs). The trained model will be saved at each batch to a directory called models
 
 # object_condensation_testing
 
